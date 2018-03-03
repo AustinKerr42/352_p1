@@ -4,39 +4,49 @@
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <stdbool.h>
+
 #define MAXLINE 80 /* The maximum length command */
+#define KNRM  "\x1B[0m"
+#define KRED  "\x1B[31m"
+#define KGRN  "\x1B[32m"
+
 int shouldrun = 1; /* flag to determine when to exit program */
-char last_cd;
-int numCommands = 0;
 
 int main(void){
     char *args[MAXLINE/2 + 1]; /* command line arguments */
     int ps;
+    int numCommands = 0;
 
     //getting user input
     char input[MAXLINE];
     char *token;
     int argNum, j, status;
+    char *helper;
+    int fd[2];
+    bool pipeIt = false;
 
     //history functionality
     FILE *historyLog;
     char history[10][MAXLINE];
     int h_length = 0;
+    // char home[30];
+    // strncpy(home, "/home/austin/Documents/352/", 30);
+    char lastDir[50];
 
     //multiple commands
     int numMultiple = 0;
     char *tokenD;
     char *delimited[10];
     int i;
-    while (shouldrun && numCommands < 10) {
-        printf("osh>");
+
+    while (shouldrun && numCommands < 100) {
+        printf(KGRN "osh>" KNRM);
         fflush(stdout);
 
-        // //if multiple commands, next[] will contain the next value and run instead
-        // // of waiting or input
-        //TODO only works for 2 commands
+        //if multiple commands, next[] will contain the next value and run instead
+        // of waiting or input
         if(numMultiple >= 1){
-          printf("delimited[0]: %s\n", delimited[0]);
           strcpy(input, delimited[0]);
           for(i=0; i < numMultiple-1; i++){
             delimited[i] = delimited[i+1];
@@ -50,34 +60,78 @@ int main(void){
             }
           }
         }
-        printf("input: %s\n", input);
-        printf("nM: %d\n", numMultiple);
 
-        if(strcmp(input, "") == 0){ //user pushed 'enter' w/out any text
+//for history commands
+        if(numCommands > 0){
+          helper = strdup(args[0]);
+        }
+//user pushed 'enter' w/out any text
+        if(strcmp(input, "") == 0){
           continue;
         }else if(strcmp(input, "exit") == 0){
           break;
-        }else if(strcmp(args[0], "!!") == 0){
+        }
+//history command !!
+        else if(strcmp(args[0], "!!") == 0){
           strcpy(input, history[h_length-1]);
         }
+//history command !h_num
+        else if(numCommands > 0 && helper[0] == '!'){
+          //get int for history command
+          for(int h=0; h < strlen(helper)-1; h++){
+            helper[h] = helper[h+1];
+          }
+          helper[strlen(helper)-1] = '\0';
+          int h_num = atoi(helper);
+          if(h_num > 0 && h_num <= h_length){
+            strcpy(input, history[h_length-h_num]);
+          }else{
+            printf("Command not in the valid range\n");
+            continue;
+          }
 
-        //add to history
-        // if(h_length == 10){
-        //   for(int z=0; z < h_length; z++){
-        //     history[z] = history[z+1];
+        }
+//pipe
+        //TODO not functional
+        // else if(argNum > 0){
+        //   if(strcmp(args[1], "|more") == 0){
+        //     pipeIt = true;
+        //     pipe(fd);
         //   }
-        //   history[h_length] = input;
-        // }else{
+        // }
+//help command
+        else if(strcmp(args[0], "help") == 0){
+          printf(KRED "\nHelp menu\n" KNRM);
+          printf("List of commands:\n");
+          printf("\
+    cd: change directories\n\
+    pwd: print working directory\n\
+    ls: list files\n\
+    dir: list files\n\
+    cat ..: display the text of a file\n\
+    cal: show calendar\n\
+    whoami: print current user\n\
+    .. | more: pipe command output to the pager\n\
+    exit: stop program\n");
+          continue;
+        }
+//if histroy command was used, deallocate space
+        if(numCommands > 0){
+          free(helper);
+        }
 
-        //TODO history past 10 ^^
-        strcpy(history[h_length], input);
+//add to history
+        if(h_length == 10){
+          for(int z=0; z < h_length; z++){
+            strcpy(history[z], history[z+1]);
+          }
+          strcpy(history[h_length-1], input);
+        }else{
+          strcpy(history[h_length], input);
+          h_length++;
+        }
 
-        //fprintf(historyLog, " h[%d]: %s", h_length, history[h_length]);
-        //history[h_length+1] = NULL;
-        h_length++;
-        //}
-
-        // //put history in log
+//put history in log file
         historyLog = fopen("/home/austin/Documents/352/352_p1/history.txt", "a");
         for(j=0; j < h_length; j++){
             fprintf(historyLog, "h[%d]: %s ", j, history[j]);
@@ -85,13 +139,13 @@ int main(void){
         fprintf(historyLog, "\n");
         fclose(historyLog);
 
-        //TODO check multiple commands -> does input have ';'
-        if(numMultiple-1 < 1){
+//check for multiple commands
+        if(numMultiple < 1){
           memset(delimited, 0, 10);
           numMultiple = 0;
           tokenD = strtok(input, ";");
 
-          //TODO put first in input, rest in delimited
+          //first command is put in input, rest stored in delimited[]
           strcpy(input, tokenD);
           tokenD = strtok(NULL, ";");
           while (tokenD != NULL)
@@ -114,29 +168,34 @@ int main(void){
           token = strtok(NULL, " ");
         }
 
-        //TODO more: first command: close stdout and send output to pipe
-          //second command: close stdin and get input from pipe
-          //pipe and more functionality are seperate
-
-        /**
-        After reading user input, the steps are:
-        (1) fork a child process using fork()
-        (2) the child process will invoke execvp()
-        (3) if command included &, parent will invoke wait()
-        */
-
         ps = fork();
         if(ps == 0){
             //child process
 
-            //check if & is used for running in the background
+            //TODO check if & is used for running in the background
             // if(strcmp(args[i-1], "&") == 0){
-            //   //?wait(NULL);?
-            // }
-            //check if cd command
-            // if(strcmp(args[0], "cd") == 0){
             //   wait(NULL);
             // }
+
+            //TODO more: first command: close stdout and send output to pipe
+              //second command: close stdin and get input from pipe
+              //pipe and more functionality are seperate
+
+            //not functional
+            if(pipeIt){
+              printf("piped\n");
+              if (fd[1] != 1){
+                dup2(fd[1], 1);
+                close(fd[1]);
+              }
+              execvp(args[0], args);
+              close(fd[1]);
+
+              if(fd[0] != 0){
+                dup2(fd[0], 0);
+              }
+            }
+
             if(-1 == execvp(args[0], args)){
               if(strcmp(args[0], "cd") != 0){
                 char errmsg[64];
@@ -145,14 +204,22 @@ int main(void){
               }
             }
             exit(1);
-
-            //exit(0);
         }
         else if(ps > 0){
             //parent process
             if(strcmp(args[0], "cd") == 0){
+            //   if(strcmp(args[1], "~") == 0){
+            //     args[1] = home;
+            //   }else if(strcmp(args[1], "-") == 0){
+            //     if(lastDir != NULL){
+            //       char temp[50];
+            //       // strcpy(temp, args[1]);
+            //       // args[1] = lastDir;
+            //       // strcpy(args[1], temp);
+            //     }
+            //   }
+
               int ret;
-              printf("args[1]: %s\n", args[1]);
               ret = chdir(args[1]);
             }
             if(strcmp(args[argNum-1], "&") != 0){
@@ -162,7 +229,7 @@ int main(void){
         else{
             //error
             printf("Error creating child process");
-            //exit(EXIT_FAILURE);
+            exit(0);
         }
         numCommands++;
     }
